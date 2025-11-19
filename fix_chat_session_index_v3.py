@@ -115,13 +115,14 @@ def scan_workspaces() -> List[WorkspaceInfo]:
 
     return workspaces
 
-def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False) -> Dict:
+def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_details: bool = False) -> Dict:
     """Repair a workspace's chat session index."""
     result = {
         'success': False,
         'sessions_restored': 0,
         'sessions_removed': 0,
-        'error': None
+        'error': None,
+        'restored_sessions': []
     }
 
     try:
@@ -170,6 +171,14 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False) -> Dict:
                     "initialLocation": session_data.get("initialLocation", "panel"),
                     "isEmpty": is_empty
                 }
+
+                # Track if this session will be restored
+                if session_id in workspace.missing_from_index:
+                    result['restored_sessions'].append({
+                        'id': session_id,
+                        'title': title,
+                        'date': last_message_date
+                    })
 
             except Exception as e:
                 print(f"      ⚠️  Failed to read {session_id}: {e}")
@@ -285,18 +294,34 @@ def main():
 
     success_count = 0
     fail_count = 0
+    all_restored_sessions = []
 
     for ws in needs_repair:
         folder_display = f" ({ws.folder})" if ws.folder else ""
         print(f"   Repairing: {ws.id}{folder_display}")
 
-        result = repair_workspace(ws, dry_run=dry_run)
+        result = repair_workspace(ws, dry_run=dry_run, show_details=dry_run)
 
         if result['success']:
             if result['sessions_restored'] > 0:
-                print(f"      ✅ Restored {result['sessions_restored']} session(s)")
+                print(f"      ✅ Will restore {result['sessions_restored']} session(s)" if dry_run else f"      ✅ Restored {result['sessions_restored']} session(s)")
+
+                # Show session details in dry-run mode
+                if dry_run and result['restored_sessions']:
+                    all_restored_sessions.extend(result['restored_sessions'])
+                    for session in result['restored_sessions'][:5]:  # Show first 5
+                        title = session['title'][:60] + "..." if len(session['title']) > 60 else session['title']
+                        date_str = ""
+                        if session['date'] > 0:
+                            dt = datetime.fromtimestamp(session['date'] / 1000)
+                            date_str = f" ({dt.strftime('%Y-%m-%d %H:%M')})"
+                        print(f"         • {title}{date_str}")
+
+                    if len(result['restored_sessions']) > 5:
+                        print(f"         ... and {len(result['restored_sessions']) - 5} more")
+
             if result['sessions_removed'] > 0:
-                print(f"      🗑️  Removed {result['sessions_removed']} orphaned entr(y|ies)")
+                print(f"      🗑️  Will remove {result['sessions_removed']} orphaned entr(y|ies)" if dry_run else f"      🗑️  Removed {result['sessions_removed']} orphaned entr(y|ies)")
             success_count += 1
         else:
             print(f"      ❌ Failed: {result['error']}")
