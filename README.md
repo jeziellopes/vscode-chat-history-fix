@@ -4,13 +4,28 @@
 
 ## Quick Fix (Recommended)
 
+### Step 1: Preview What Will Be Restored
+
+```bash
+python3 fix_chat_session_index_v3.py --dry-run
+```
+
+This shows you exactly which sessions will be restored **without making any changes**. You'll see:
+- Which workspaces have issues
+- How many sessions will be restored
+- Preview of session titles and dates
+
+### Step 2: Apply the Fix
+
 **Close VS Code completely**, then run:
 
 ```bash
 python3 fix_chat_session_index_v3.py
 ```
 
-That's it! Reopen VS Code and your chat sessions should be back.
+### Step 3: Verify
+
+Reopen VS Code and check the Chat view - your sessions should be back!
 
 ---
 
@@ -83,6 +98,8 @@ Always close VS Code **completely** before running these scripts. Otherwise, VS 
 
 ## Example Output
 
+### Preview Mode (--dry-run)
+
 ```
 🔍 Scanning VS Code workspaces...
    Found 3 workspace(s) with chat sessions
@@ -98,9 +115,36 @@ Always close VS Code **completely** before running these scripts. Otherwise, VS 
 📊 Total issues:
    Sessions to restore: 12
 
+🔧 Repairing workspaces...
+
+   Repairing: 68afb7ebecb251d147a02dcf70c41df7 (/home/user/my-project)
+      ✅ Will restore 12 session(s)
+         • How to fix TypeScript compilation errors (2024-10-28 22:50)
+         • Implement user authentication system (2024-10-06 19:25)
+         • Debug React component rendering issue (2024-10-07 09:22)
+         • Setup PostgreSQL database connection (2024-10-25 11:03)
+         • Write unit tests for API endpoints (2024-10-08 16:50)
+         ... and 7 more
+
+🔍 DRY RUN COMPLETE
+
+To apply these changes, run without --dry-run:
+   python3 fix_chat_session_index_v3.py
+```
+
+### Actual Repair
+
+```
 ✨ REPAIR COMPLETE
    Workspaces repaired: 1
    Total sessions restored: 12
+
+📝 Next Steps:
+   1. Start VS Code
+   2. Open the Chat view
+   3. Your sessions should now be visible!
+
+💾 Backups were created for all modified databases
 ```
 
 ---
