@@ -37,6 +37,36 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Set, Optional
+from pathlib import Path
+
+def extract_project_name(folder_path: Optional[str]) -> Optional[str]:
+    """Extract the project/folder name from a workspace folder path."""
+    if not folder_path:
+        return None
+    
+    # Handle URI format (file:///path/to/folder)
+    if folder_path.startswith('file://'):
+        folder_path = folder_path[7:]  # Remove 'file://'
+    
+    # Get the last component of the path (the folder name)
+    try:
+        return Path(folder_path).name
+    except:
+        return None
+
+def folders_match(folder1: Optional[str], folder2: Optional[str]) -> bool:
+    """Check if two workspace folders likely refer to the same project."""
+    if not folder1 or not folder2:
+        return False
+    
+    name1 = extract_project_name(folder1)
+    name2 = extract_project_name(folder2)
+    
+    if not name1 or not name2:
+        return False
+    
+    # Case-insensitive comparison
+    return name1.lower() == name2.lower()
 
 class WorkspaceInfo:
     def __init__(self, workspace_dir: Path):
@@ -123,11 +153,18 @@ def scan_workspaces() -> List[WorkspaceInfo]:
 
     return workspaces
 
-def find_orphan_in_other_workspaces(session_id: str, current_workspace: WorkspaceInfo, all_workspaces: List[WorkspaceInfo]) -> Optional[WorkspaceInfo]:
-    """Check if an orphaned session ID exists as a file in another workspace."""
+def find_orphan_in_other_workspaces(session_id: str, current_workspace: WorkspaceInfo, all_workspaces: List[WorkspaceInfo]) -> Optional[Dict]:
+    """Check if an orphaned session ID exists as a file in another workspace.
+    
+    Returns a dict with workspace info and whether it's the same project folder.
+    """
     for ws in all_workspaces:
         if ws.id != current_workspace.id and session_id in ws.sessions_on_disk:
-            return ws
+            same_project = folders_match(current_workspace.folder, ws.folder)
+            return {
+                'workspace': ws,
+                'same_project': same_project
+            }
     return None
 
 def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_details: bool = False, remove_orphans: bool = False) -> Dict:
@@ -319,11 +356,21 @@ def main():
             
             # Check if orphans exist in other workspaces
             for session_id in ws.orphaned_in_index:
-                found_in = find_orphan_in_other_workspaces(session_id, ws, workspaces)
-                if found_in:
-                    recoverable_orphans[session_id] = found_in
-                    folder_display = f" ({found_in.folder})" if found_in.folder else ""
-                    print(f"      💡 Session {session_id[:8]}... found in workspace {found_in.id}{folder_display}")
+                found_info = find_orphan_in_other_workspaces(session_id, ws, workspaces)
+                if found_info:
+                    recoverable_orphans[session_id] = found_info
+                    found_ws = found_info['workspace']
+                    same_project = found_info['same_project']
+                    
+                    folder_display = f" ({found_ws.folder})" if found_ws.folder else ""
+                    
+                    if same_project:
+                        # Highlight that it's from the same project
+                        project_name = extract_project_name(ws.folder)
+                        print(f"      💡 Session {session_id[:8]}... found in workspace {found_ws.id}{folder_display}")
+                        print(f"         ⭐ Same project folder: '{project_name}' - likely belongs here!")
+                    else:
+                        print(f"      💡 Session {session_id[:8]}... found in workspace {found_ws.id}{folder_display}")
 
         print()
 

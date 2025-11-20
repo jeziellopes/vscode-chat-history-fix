@@ -38,6 +38,35 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Set, Dict
 
+def extract_project_name(folder_path: Optional[str]) -> Optional[str]:
+    """Extract the project/folder name from a workspace folder path."""
+    if not folder_path:
+        return None
+    
+    # Handle URI format (file:///path/to/folder)
+    if folder_path.startswith('file://'):
+        folder_path = folder_path[7:]  # Remove 'file://'
+    
+    # Get the last component of the path (the folder name)
+    try:
+        return Path(folder_path).name
+    except:
+        return None
+
+def folders_match(folder1: Optional[str], folder2: Optional[str]) -> bool:
+    """Check if two workspace folders likely refer to the same project."""
+    if not folder1 or not folder2:
+        return False
+    
+    name1 = extract_project_name(folder1)
+    name2 = extract_project_name(folder2)
+    
+    if not name1 or not name2:
+        return False
+    
+    # Case-insensitive comparison
+    return name1.lower() == name2.lower()
+
 def get_sessions_from_disk(sessions_dir: Path) -> Set[str]:
     """Get set of session IDs from disk."""
     if not sessions_dir.exists():
@@ -62,8 +91,11 @@ def get_sessions_from_index(db_path: Path) -> Set[str]:
         pass
     return set()
 
-def find_session_in_workspaces(session_id: str, exclude_workspace: str) -> Optional[Dict]:
-    """Find a session file in other workspaces."""
+def find_session_in_workspaces(session_id: str, exclude_workspace: str, current_workspace_folder: Optional[str] = None) -> Optional[Dict]:
+    """Find a session file in other workspaces.
+    
+    Returns dict with workspace info and whether it matches the current project folder.
+    """
     storage_root = Path.home() / ".config/Code/User/workspaceStorage"
     if not storage_root.exists():
         return None
@@ -92,10 +124,13 @@ def find_session_in_workspaces(session_id: str, exclude_workspace: str) -> Optio
                 except:
                     pass
             
+            same_project = folders_match(current_workspace_folder, folder)
+            
             return {
                 'workspace_id': workspace_dir.name,
                 'folder': folder,
-                'session_file': session_file
+                'session_file': session_file,
+                'same_project': same_project
             }
     
     return None
@@ -194,6 +229,28 @@ def repair_workspace(workspace_path, dry_run: bool = False, remove_orphans: bool
     print(f"📁 Workspace ID: {workspace_storage.name}")
     print(f"📁 Sessions Directory: {sessions_dir}")
     print(f"📁 Database: {db_path}")
+    
+    # Get workspace folder for project matching
+    workspace_json = workspace_storage / "workspace.json"
+    current_workspace_folder = None
+    if workspace_json.exists():
+        try:
+            with open(workspace_json, 'r') as f:
+                info = json.load(f)
+                if 'folder' in info:
+                    folder_data = info['folder']
+                    if isinstance(folder_data, str):
+                        current_workspace_folder = folder_data
+                    elif isinstance(folder_data, dict) and 'path' in folder_data:
+                        current_workspace_folder = folder_data['path']
+        except:
+            pass
+    
+    if current_workspace_folder:
+        project_name = extract_project_name(current_workspace_folder)
+        if project_name:
+            print(f"📁 Project: {project_name}")
+    
     print()
 
     # Check current index
@@ -238,11 +295,18 @@ def repair_workspace(workspace_path, dry_run: bool = False, remove_orphans: bool
         # Check if orphans exist in other workspaces
         recoverable_orphans = {}
         for session_id in orphaned_in_index:
-            found_in = find_session_in_workspaces(session_id, workspace_storage.name)
-            if found_in:
-                recoverable_orphans[session_id] = found_in
-                folder_display = f" ({found_in['folder']})" if found_in['folder'] else ""
-                print(f"      💡 Session {session_id[:8]}... found in workspace {found_in['workspace_id']}{folder_display}")
+            found_info = find_session_in_workspaces(session_id, workspace_storage.name, current_workspace_folder)
+            if found_info:
+                recoverable_orphans[session_id] = found_info
+                folder_display = f" ({found_info['folder']})" if found_info['folder'] else ""
+                
+                if found_info['same_project']:
+                    # Highlight that it's from the same project
+                    project_name = extract_project_name(current_workspace_folder)
+                    print(f"      💡 Session {session_id[:8]}... found in workspace {found_info['workspace_id']}{folder_display}")
+                    print(f"         ⭐ Same project folder: '{project_name}' - likely belongs here!")
+                else:
+                    print(f"      💡 Session {session_id[:8]}... found in workspace {found_info['workspace_id']}{folder_display}")
         
         if recoverable_orphans:
             print(f"      🔍 {len(recoverable_orphans)} orphan(s) found in other workspaces")
