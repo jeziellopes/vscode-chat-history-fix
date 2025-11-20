@@ -1,35 +1,53 @@
 #!/usr/bin/env python3
 """
-VS Code Chat Session Index Repair Tool v3 - Automatic Repair
-=============================================================
+VS Code Chat History Repair Tool
+=================================
 
-This script automatically finds and repairs ALL VS Code workspaces that have
-missing chat sessions in their index.
+Fixes missing chat sessions in VS Code by rebuilding the session index.
 
-Features:
-- Scans all VS Code workspaces
-- Detects index corruption (sessions on disk vs sessions in index)
-- Automatically repairs all corrupted workspaces
-- Shows detailed report of what was fixed
-- Optionally removes orphaned index entries
+Problem:
+- Chat session files exist in: chatSessions/*.json
+- But they don't appear in VS Code's UI
+- Because they're missing from: state.vscdb → chat.ChatSessionStore.index
+
+Solution:
+- Scans session JSON files
+- Rebuilds the index in state.vscdb
 - Can recover orphaned sessions from other workspaces
 
 Usage:
-    python3 fix_chat_session_index_v3.py [OPTIONS]
+    # Auto-repair ALL workspaces
+    python3 fix_chat_history.py
     
-Options:
-    --dry-run          Show what would be fixed without making changes
-    --yes              Skip confirmation prompts and fix everything
-    --remove-orphans   Remove orphaned index entries (sessions in index but no file)
-                       By default, orphaned entries are kept for safety
-    --recover-orphans  Copy orphaned session files from other workspaces when found
-                       This restores sessions that exist elsewhere
+    # List all workspaces
+    python3 fix_chat_history.py --list
+    
+    # Repair specific workspace
+    python3 fix_chat_history.py <workspace_id>
 
-What are orphaned entries?
-    - Index entries for sessions where the .json file no longer exists
-    - Usually safe to remove, but kept by default to avoid data loss
-    - Use --remove-orphans only if you're sure you want to delete them
-    - Use --recover-orphans to copy the files back from other workspaces
+Options:
+    --list             List all workspaces with chat sessions
+    --dry-run          Preview changes without modifying anything
+    --yes              Skip confirmation prompts
+    --remove-orphans   Remove orphaned index entries (default: keep)
+    --recover-orphans  Copy orphaned sessions from other workspaces
+    --help, -h         Show this help message
+
+Examples:
+    # Safe preview of what would be fixed
+    python3 fix_chat_history.py --dry-run
+    
+    # Fix everything automatically
+    python3 fix_chat_history.py --yes
+    
+    # Recover sessions from other workspaces
+    python3 fix_chat_history.py --recover-orphans
+    
+    # List workspaces to find ID
+    python3 fix_chat_history.py --list
+    
+    # Fix specific workspace
+    python3 fix_chat_history.py f4c750964946a489902dcd863d1907de
 
 IMPORTANT: Close VS Code completely before running this script!
 """
@@ -41,7 +59,6 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Set, Optional
-from pathlib import Path
 
 def extract_project_name(folder_path: Optional[str]) -> Optional[str]:
     """Extract the project/folder name from a workspace folder path."""
@@ -317,15 +334,210 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_detai
 
     return result
 
-def main():
-    dry_run = '--dry-run' in sys.argv
-    auto_yes = '--yes' in sys.argv
-    remove_orphans = '--remove-orphans' in sys.argv
-    recover_orphans = '--recover-orphans' in sys.argv
+def list_workspaces_mode():
+    """List all workspaces with chat sessions."""
+    print()
+    print("=" * 70)
+    print("VS Code Workspaces with Chat Sessions")
+    print("=" * 70)
+    print()
+
+    workspaces = scan_workspaces()
+
+    if not workspaces:
+        print("No workspaces with chat sessions found.")
+        return 0
+
+    print(f"Found {len(workspaces)} workspace(s):")
+    print()
+
+    for i, ws in enumerate(workspaces, 1):
+        status = "⚠️  NEEDS REPAIR" if ws.needs_repair else "✅ HEALTHY"
+        print(f"{i}. {ws.get_display_name()} - {status}")
+        
+        # Show full ID if we have Unknown workspace
+        if not ws.folder and not ws.workspace_file:
+            print(f"   ID: {ws.id}")
+        
+        if ws.folder:
+            print(f"   Folder: {ws.folder}")
+        elif ws.workspace_file:
+            print(f"   Workspace file: {ws.workspace_file}")
+        
+        print(f"   Sessions on disk: {len(ws.sessions_on_disk)}")
+        print(f"   Sessions in index: {len(ws.sessions_in_index)}")
+        
+        if ws.missing_from_index:
+            print(f"   ⚠️  Missing from index: {len(ws.missing_from_index)}")
+        
+        if ws.orphaned_in_index:
+            print(f"   🗑️  Orphaned in index: {len(ws.orphaned_in_index)}")
+        
+        print()
+
+    needs_repair = [ws for ws in workspaces if ws.needs_repair]
+    
+    if needs_repair:
+        print(f"📊 Summary: {len(needs_repair)} workspace(s) need repair")
+        print()
+        print("To repair all workspaces:")
+        print("  python3 fix_chat_history.py")
+        print()
+        print("To repair a specific workspace:")
+        print(f"  python3 fix_chat_history.py {needs_repair[0].id}")
+        print()
+    else:
+        print("✅ All workspaces are healthy!")
+        print()
+
+    return 0
+
+def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bool, recover_orphans: bool, auto_yes: bool):
+    """Repair a specific workspace by ID."""
+    storage_root = Path.home() / ".config/Code/User/workspaceStorage"
+    workspace_path = storage_root / workspace_id
+
+    if not workspace_path.exists():
+        print(f"❌ Error: Workspace ID '{workspace_id}' not found")
+        print()
+        print("Run with --list to see available workspaces.")
+        return 1
 
     print()
     print("=" * 70)
-    print("VS Code Chat Session Index Repair Tool v3 - Automatic Repair")
+    print("VS Code Chat History Repair Tool - Single Workspace")
+    print("=" * 70)
+    print()
+
+    if dry_run:
+        print("🔍 DRY RUN MODE - No changes will be made")
+        print()
+
+    workspace = WorkspaceInfo(workspace_path)
+    
+    print(f"🔧 Workspace: {workspace.get_display_name()}")
+    if not workspace.folder and not workspace.workspace_file:
+        print(f"   ID: {workspace.id}")
+    if workspace.folder:
+        print(f"   Folder: {workspace.folder}")
+    elif workspace.workspace_file:
+        print(f"   Workspace file: {workspace.workspace_file}")
+    
+    print(f"   Sessions on disk: {len(workspace.sessions_on_disk)}")
+    print(f"   Sessions in index: {len(workspace.sessions_in_index)}")
+    print()
+
+    if not workspace.needs_repair:
+        print("✅ This workspace doesn't need repair!")
+        return 0
+
+    # Show what needs fixing
+    if workspace.missing_from_index:
+        print(f"⚠️  Missing from index: {len(workspace.missing_from_index)}")
+    
+    recoverable_orphans = {}
+    
+    if workspace.orphaned_in_index:
+        orphan_msg = f"🗑️  Orphaned in index: {len(workspace.orphaned_in_index)}"
+        if remove_orphans:
+            orphan_msg += " (will be removed)"
+        else:
+            orphan_msg += " (will be kept)"
+        print(orphan_msg)
+        
+        # Check if orphans exist in other workspaces
+        all_workspaces = scan_workspaces()
+        for session_id in workspace.orphaned_in_index:
+            found_info = find_orphan_in_other_workspaces(session_id, workspace, all_workspaces)
+            if found_info:
+                recoverable_orphans[session_id] = found_info
+                found_ws = found_info['workspace']
+                same_project = found_info['same_project']
+                
+                if same_project:
+                    project_name = extract_project_name(workspace.folder)
+                    print(f"   💡 Session {session_id[:8]}... found in workspace: {found_ws.get_display_name()}")
+                    print(f"      ⭐ Same project folder: '{project_name}' - likely belongs here!")
+                else:
+                    print(f"   💡 Session {session_id[:8]}... found in workspace: {found_ws.get_display_name()}")
+        
+        if recoverable_orphans and not recover_orphans:
+            print(f"   💡 Use --recover-orphans to copy these {len(recoverable_orphans)} session(s) back")
+    
+    print()
+
+    # Recover orphaned sessions if requested
+    if recover_orphans and recoverable_orphans and not dry_run:
+        print("📥 Recovering orphaned sessions...")
+        
+        workspace.sessions_dir.mkdir(parents=True, exist_ok=True)
+        
+        for session_id, found_info in recoverable_orphans.items():
+            found_ws = found_info['workspace']
+            source_file = found_ws.sessions_dir / f"{session_id}.json"
+            target_file = workspace.sessions_dir / f"{session_id}.json"
+            
+            try:
+                shutil.copy2(source_file, target_file)
+                print(f"   ✅ Copied {session_id[:8]}... from {found_ws.get_display_name()}")
+                workspace.sessions_on_disk.add(session_id)
+            except Exception as e:
+                print(f"   ❌ Failed to copy {session_id[:8]}...: {e}")
+        
+        print()
+
+    # Confirm before proceeding
+    if not dry_run and not auto_yes:
+        print("⚠️  This will modify the database for this workspace.")
+        print("   A backup will be created before making changes.")
+        print()
+        response = input("Proceed with repair? (yes/no): ").strip().lower()
+        if response not in ['yes', 'y']:
+            print()
+            print("❌ Aborted.")
+            return 1
+        print()
+
+    # Repair
+    print("🔧 Repairing workspace...")
+    result = repair_workspace(workspace, dry_run=dry_run, remove_orphans=remove_orphans)
+
+    if result['success']:
+        print()
+        print("=" * 70)
+        print("✨ REPAIR COMPLETE" if not dry_run else "🔍 DRY RUN COMPLETE")
+        print("=" * 70)
+        print()
+        print(f"📊 Summary:")
+        if result['sessions_restored'] > 0:
+            print(f"   Sessions restored: {result['sessions_restored']}")
+        if result['sessions_removed'] > 0:
+            print(f"   Orphaned entries removed: {result['sessions_removed']}")
+        print()
+        
+        if not dry_run:
+            print("📝 Next Steps:")
+            print("   1. Start VS Code")
+            print("   2. Open the Chat view")
+            print("   3. Your sessions should now be visible!")
+            print()
+            print("💾 Backup created for the database")
+            print()
+        else:
+            print("To apply these changes, run without --dry-run:")
+            print(f"   python3 fix_chat_history.py {workspace_id}")
+            print()
+        
+        return 0
+    else:
+        print(f"❌ Repair failed: {result['error']}")
+        return 1
+
+def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, recover_orphans: bool):
+    """Auto-repair all workspaces that need it."""
+    print()
+    print("=" * 70)
+    print("VS Code Chat History Repair Tool - Auto Repair")
     print("=" * 70)
     print()
 
@@ -468,7 +680,6 @@ def main():
             print(f"   {session_id[:8]}... from {found_ws.get_display_name()}")
         print()
 
-
     # Confirm before proceeding
     if not dry_run and not auto_yes:
         print("⚠️  This will modify the database for these workspaces.")
@@ -487,7 +698,6 @@ def main():
 
     success_count = 0
     fail_count = 0
-    all_restored_sessions = []
 
     for ws in needs_repair:
         print(f"   Repairing: {ws.get_display_name()}")
@@ -499,20 +709,6 @@ def main():
         if result['success']:
             if result['sessions_restored'] > 0:
                 print(f"      ✅ Will restore {result['sessions_restored']} session(s)" if dry_run else f"      ✅ Restored {result['sessions_restored']} session(s)")
-
-                # Show session details in dry-run mode
-                if dry_run and result['restored_sessions']:
-                    all_restored_sessions.extend(result['restored_sessions'])
-                    for session in result['restored_sessions'][:5]:  # Show first 5
-                        title = session['title'][:60] + "..." if len(session['title']) > 60 else session['title']
-                        date_str = ""
-                        if session['date'] > 0:
-                            dt = datetime.fromtimestamp(session['date'] / 1000)
-                            date_str = f" ({dt.strftime('%Y-%m-%d %H:%M')})"
-                        print(f"         • {title}{date_str}")
-
-                    if len(result['restored_sessions']) > 5:
-                        print(f"         ... and {len(result['restored_sessions']) - 5} more")
 
             if result['sessions_removed'] > 0:
                 print(f"      🗑️  Will remove {result['sessions_removed']} orphaned entr(y|ies)" if dry_run else f"      🗑️  Removed {result['sessions_removed']} orphaned entr(y|ies)")
@@ -536,7 +732,7 @@ def main():
     if fail_count > 0:
         print(f"   Failed: {fail_count}")
     print(f"   Total sessions restored: {total_missing}")
-    if total_orphaned > 0:
+    if total_orphaned > 0 and remove_orphans:
         print(f"   Total orphaned entries removed: {total_orphaned}")
     print()
 
@@ -551,29 +747,62 @@ def main():
         print()
     else:
         print("To apply these changes, run without --dry-run:")
-        print(f"   python3 {sys.argv[0]}")
+        print(f"   python3 fix_chat_history.py")
         print()
 
     return 0 if fail_count == 0 else 1
 
-if __name__ == "__main__":
-    if '--help' in sys.argv or '-h' in sys.argv:
+def main():
+    # Parse flags
+    dry_run = '--dry-run' in sys.argv
+    auto_yes = '--yes' in sys.argv
+    remove_orphans = '--remove-orphans' in sys.argv
+    recover_orphans = '--recover-orphans' in sys.argv
+    list_mode = '--list' in sys.argv
+    show_help = '--help' in sys.argv or '-h' in sys.argv
+
+    if show_help:
         print(__doc__)
-        sys.exit(0)
+        return 0
 
-    print()
+    # List mode
+    if list_mode:
+        return list_workspaces_mode()
 
-    if '--dry-run' not in sys.argv:
-        print("⚠️  IMPORTANT: Please close VS Code completely before continuing!")
-        print()
+    # Find first non-flag argument to use as workspace id
+    workspace_id = None
+    for arg in sys.argv[1:]:
+        if not arg.startswith('-'):
+            workspace_id = arg
+            break
 
-        if '--yes' not in sys.argv:
+    # Single workspace mode
+    if workspace_id:
+        if not dry_run and not auto_yes:
+            print("⚠️  IMPORTANT: Please close VS Code completely before continuing!")
+            print()
             response = input("Have you closed VS Code? (yes/no): ").strip().lower()
             if response not in ['yes', 'y']:
                 print()
                 print("❌ Aborted. Please close VS Code and run this script again.")
-                sys.exit(1)
+                return 1
             print()
 
+        return repair_single_workspace(workspace_id, dry_run, remove_orphans, recover_orphans, auto_yes)
+
+    # Auto-repair all workspaces mode (default)
+    if not dry_run and not auto_yes:
+        print()
+        print("⚠️  IMPORTANT: Please close VS Code completely before continuing!")
+        print()
+        response = input("Have you closed VS Code? (yes/no): ").strip().lower()
+        if response not in ['yes', 'y']:
+            print()
+            print("❌ Aborted. Please close VS Code and run this script again.")
+            return 1
+
+    return repair_all_workspaces(dry_run, auto_yes, remove_orphans, recover_orphans)
+
+if __name__ == "__main__":
     exit_code = main()
     sys.exit(exit_code)
