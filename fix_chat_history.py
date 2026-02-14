@@ -102,6 +102,102 @@ def folders_match(folder1: Optional[str], folder2: Optional[str]) -> bool:
     # Case-insensitive comparison
     return name1.lower() == name2.lower()
 
+def read_session_metadata(session_file: Path) -> Dict:
+    """Read session metadata from either .json or .jsonl file format.
+    
+    Returns a dict with: title, last_message_date, is_empty, initial_location
+    """
+    metadata = {
+        "title": "Untitled Session",
+        "last_message_date": 0,
+        "is_empty": True,
+        "initial_location": "panel"
+    }
+    
+    try:
+        if session_file.suffix == ".json":
+            # Original format: single JSON object with "requests" array
+            with open(session_file, 'r', encoding='utf-8') as f:
+                session_data = json.load(f)
+            
+            if "requests" in session_data and session_data["requests"]:
+                metadata["is_empty"] = False
+                first_request = session_data["requests"][0]
+                
+                # Extract title from message parts
+                if "message" in first_request and "parts" in first_request["message"]:
+                    text_parts = [
+                        p.get("text", "")
+                        for p in first_request["message"]["parts"]
+                        if "text" in p
+                    ]
+                    if text_parts:
+                        title = text_parts[0].strip()
+                        if len(title) > 100:
+                            title = title[:97] + "..."
+                        if title:
+                            metadata["title"] = title
+                
+                # Get timestamp from last request
+                last_request = session_data["requests"][-1]
+                metadata["last_message_date"] = last_request.get("timestamp", 0)
+            
+            metadata["initial_location"] = session_data.get("initialLocation", "panel")
+        
+        elif session_file.suffix == ".jsonl":
+            # New format: JSON Lines (each line is a JSON object)
+            with open(session_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            
+            if not lines:
+                return metadata
+            
+            metadata["is_empty"] = False
+            
+            # Parse each line and look for relevant data
+            messages = []
+            timestamps = []
+            
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                    
+                    # Extract text from message objects
+                    if "value" in obj and isinstance(obj["value"], str):
+                        messages.append(obj["value"])
+                    
+                    # Extract timestamp if available
+                    if "timestamp" in obj:
+                        timestamps.append(obj["timestamp"])
+                    
+                except json.JSONDecodeError:
+                    continue
+            
+            # Use first message as title
+            if messages:
+                title = messages[0].strip()
+                # Remove markdown formatting and limit length
+                title = title.replace('**', '').replace('*', '')
+                if len(title) > 100:
+                    title = title[:97] + "..."
+                if title:
+                    metadata["title"] = title
+            
+            # Use last timestamp
+            if timestamps:
+                metadata["last_message_date"] = max(timestamps)
+            else:
+                # Use file modification time as fallback
+                metadata["last_message_date"] = int(session_file.stat().st_mtime * 1000)
+    
+    except Exception as e:
+        # Return default metadata on error
+        pass
+    
+    return metadata
+
 class WorkspaceInfo:
     def __init__(self, workspace_dir: Path):
         self.path = workspace_dir
@@ -130,11 +226,19 @@ class WorkspaceInfo:
             except:
                 pass
 
-        # Get session IDs from disk
+        # Get session IDs from disk (support both .json and .jsonl)
         self.sessions_on_disk: Set[str] = set()
+        self.session_files: Dict[str, str] = {}  # session_id -> file extension
         if self.sessions_dir.exists():
+            # Look for both .json and .jsonl files
             for session_file in self.sessions_dir.glob("*.json"):
-                self.sessions_on_disk.add(session_file.stem)
+                session_id = session_file.stem
+                self.sessions_on_disk.add(session_id)
+                self.session_files[session_id] = ".json"
+            for session_file in self.sessions_dir.glob("*.jsonl"):
+                session_id = session_file.stem
+                self.sessions_on_disk.add(session_id)
+                self.session_files[session_id] = ".jsonl"
 
         # Get session IDs from index
         self.sessions_in_index: Set[str] = set()
@@ -257,54 +361,29 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_detai
                 pass
 
         for session_id in sorted(workspace.sessions_on_disk):
-            session_file = workspace.sessions_dir / f"{session_id}.json"
+            # Get the correct file extension for this session
+            file_ext = workspace.session_files.get(session_id, ".json")
+            session_file = workspace.sessions_dir / f"{session_id}{file_ext}"
 
             try:
-                with open(session_file, 'r', encoding='utf-8') as f:
-                    session_data = json.load(f)
-
-                # Extract metadata
-                title = "Untitled Session"
-                last_message_date = 0
-                is_empty = True
-
-                if "requests" in session_data and session_data["requests"]:
-                    is_empty = False
-                    first_request = session_data["requests"][0]
-
-                    # Extract title from message parts
-                    if "message" in first_request and "parts" in first_request["message"]:
-                        text_parts = [
-                            p.get("text", "")
-                            for p in first_request["message"]["parts"]
-                            if "text" in p
-                        ]
-                        if text_parts:
-                            title = text_parts[0].strip()
-                            if len(title) > 100:
-                                title = title[:97] + "..."
-                            if not title:
-                                title = "Untitled Session"
-
-                    # Get timestamp from last request
-                    last_request = session_data["requests"][-1]
-                    last_message_date = last_request.get("timestamp", 0)
+                # Read metadata from either .json or .jsonl format
+                metadata = read_session_metadata(session_file)
 
                 entries[session_id] = {
                     "sessionId": session_id,
-                    "title": title,
-                    "lastMessageDate": last_message_date,
+                    "title": metadata["title"],
+                    "lastMessageDate": metadata["last_message_date"],
                     "isImported": False,
-                    "initialLocation": session_data.get("initialLocation", "panel"),
-                    "isEmpty": is_empty
+                    "initialLocation": metadata["initial_location"],
+                    "isEmpty": metadata["is_empty"]
                 }
 
                 # Track if this session will be restored
                 if session_id in workspace.missing_from_index:
                     result['restored_sessions'].append({
                         'id': session_id,
-                        'title': title,
-                        'date': last_message_date
+                        'title': metadata["title"],
+                        'date': metadata["last_message_date"]
                     })
 
             except Exception as e:

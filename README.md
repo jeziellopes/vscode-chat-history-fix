@@ -40,13 +40,19 @@ VS Code's core chat service (not the GitHub Copilot extension) manages regular c
 ├── state.vscdb                    # SQLite database
 │   └── chat.ChatSessionStore.index  # Index of all sessions
 └── chatSessions/
-    ├── session-1.json             # Your actual chat data
-    ├── session-2.json
+    ├── session-1.json             # Your actual chat data (original format)
+    ├── session-2.jsonl            # New JSON Lines format
     └── session-3.json
 ```
 
+**Session File Formats:**
+- **`.json`**: Original format - single JSON object with `requests` array
+- **`.jsonl`**: New JSON Lines format - each line is a separate JSON object representing conversation events
+
+The tool automatically detects and handles both formats.
+
 **Session Creation Process:**
-1. Full conversation stored as JSON in `chatSessions/`
+1. Full conversation stored as `.json` or `.jsonl` file in `chatSessions/`
 2. Index entry added to `state.vscdb` with metadata (title, timestamp, location)
 
 **Session Restoration Process:**
@@ -67,8 +73,8 @@ The index in `state.vscdb` can become corrupted or out of sync with actual sessi
 ### Repair Process
 
 The tool performs the following operations:
-1. Scans `chatSessions/` directory for all session JSON files
-2. Extracts metadata from each session file
+1. Scans `chatSessions/` directory for all session files (both `.json` and `.jsonl`)
+2. Extracts metadata from each session file (handles both formats automatically)
 3. Rebuilds `chat.ChatSessionStore.index` in `state.vscdb`
 4. Creates timestamped backup before modifications
 
@@ -333,6 +339,9 @@ No. Only the database index is modified. Session data files are read-only operat
 
 **What are orphaned index entries?**  
 Index references to non-existent session files. Retained by default for safety (e.g., temporarily unmounted drives). Use `--remove-orphans` to clean up.
+
+**Does the tool support the new JSONL format?**  
+Yes! GitHub Copilot recently switched from `.json` to `.jsonl` (JSON Lines) format for storing sessions. The tool automatically detects and handles both formats. If you previously used `--remove-orphans` with an older version of this tool, it may have incorrectly removed `.jsonl` sessions from the index. Simply run the tool again to restore them.
 
 ---
 
