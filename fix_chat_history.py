@@ -566,13 +566,16 @@ def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bo
         
         for session_id, found_info in recoverable_orphans.items():
             found_ws = found_info['workspace']
-            source_file = found_ws.sessions_dir / f"{session_id}.json"
-            target_file = workspace.sessions_dir / f"{session_id}.json"
+            # Use the correct file extension for this session
+            file_ext = found_ws.session_files.get(session_id, ".json")
+            source_file = found_ws.sessions_dir / f"{session_id}{file_ext}"
+            target_file = workspace.sessions_dir / f"{session_id}{file_ext}"
             
             try:
                 shutil.copy2(source_file, target_file)
                 print(f"   ✅ Copied {session_id[:8]}... from {found_ws.get_display_name()}")
                 workspace.sessions_on_disk.add(session_id)
+                workspace.session_files[session_id] = file_ext
             except Exception as e:
                 print(f"   ❌ Failed to copy {session_id[:8]}...: {e}")
         
@@ -749,8 +752,10 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
             target_ws.sessions_dir.mkdir(parents=True, exist_ok=True)
             
             for session_id, source_ws in sessions_to_recover:
-                source_file = source_ws.sessions_dir / f"{session_id}.json"
-                target_file = target_ws.sessions_dir / f"{session_id}.json"
+                # Use the correct file extension for this session
+                file_ext = source_ws.session_files.get(session_id, ".json")
+                source_file = source_ws.sessions_dir / f"{session_id}{file_ext}"
+                target_file = target_ws.sessions_dir / f"{session_id}{file_ext}"
                 
                 try:
                     shutil.copy2(source_file, target_file)
@@ -758,6 +763,7 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
                     total_recovered += 1
                     # Update the workspace's sessions_on_disk to include this session
                     target_ws.sessions_on_disk.add(session_id)
+                    target_ws.session_files[session_id] = file_ext
                 except Exception as e:
                     print(f"      ❌ Failed to copy {session_id[:8]}...: {e}")
             
