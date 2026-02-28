@@ -1,0 +1,13 @@
+{
+  "name": "vscode-chat-history-fix",
+  "version": "0.0.0",
+  "description": "Automated releases with semantic-release",
+  "main": "fix_chat_history.py",
+  "scripts": {},
+  "devDependencies": {
+    "semantic-release": "^23.0.0",
+    "@semantic-release/changelog": "^6.0.2",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^9.0.3"
+  }
+}
