@@ -27,6 +27,15 @@ python3 fix_chat_history.py
 
 Restart VS Code and verify sessions appear in the Chat view.
 
+### VS Code Insiders
+
+For VS Code Insiders users, add the `--insiders` flag:
+
+```bash
+python3 fix_chat_history.py --insiders --dry-run
+python3 fix_chat_history.py --insiders
+```
+
 ---
 
 ## Technical Overview
@@ -38,19 +47,26 @@ VS Code's core chat service (not the GitHub Copilot extension) manages regular c
 ```
 ~/.config/Code/User/workspaceStorage/<workspace-id>/
 ├── state.vscdb                    # SQLite database
-│   └── chat.ChatSessionStore.index  # Index of all sessions
+│   ├── chat.ChatSessionStore.index  # Index of all sessions
+│   ├── agentSessions.model.cache    # Agent panel session list
+│   └── agentSessions.state.cache    # Agent panel read/archive state
 └── chatSessions/
-    ├── session-1.json             # Your actual chat data
-    ├── session-2.json
+    ├── session-1.json             # Legacy full JSON format
+    ├── session-2.jsonl            # Newer JSONL mutation log format
     └── session-3.json
 ```
 
-**Session Creation Process:**
-1. Full conversation stored as JSON in `chatSessions/`
-2. Index entry added to `state.vscdb` with metadata (title, timestamp, location)
+**Session File Formats:**
+- `.json` — Legacy format: full conversation as a single JSON object
+- `.jsonl` — Newer format (JSON Lines): mutation log with `kind:0` (initial state), `kind:1` (set mutation), `kind:2` (array splice/push)
+
+**Database Keys:**
+- `chat.ChatSessionStore.index` — Session metadata index (title, timestamp, location)
+- `agentSessions.model.cache` — Agent/Copilot panel session list (resource URIs, labels, timing)
+- `agentSessions.state.cache` — Agent panel read/archive state
 
 **Session Restoration Process:**
-- On startup, VS Code reads `chat.ChatSessionStore.index` from `state.vscdb` to determine which sessions to load
+- On startup, VS Code reads both `chat.ChatSessionStore.index` and `agentSessions.model.cache` to populate the Chat/Agent panel
 
 ### Root Cause
 
@@ -124,6 +140,12 @@ python3 fix_chat_history.py --remove-orphans
 
 # Combine flags: recover orphans + auto-confirm
 python3 fix_chat_history.py --recover-orphans --yes
+
+# Use VS Code Insiders instead of regular VS Code
+python3 fix_chat_history.py --insiders
+
+# Merge duplicate workspace folders (see Machine Migration below)
+python3 fix_chat_history.py --merge
 
 # Help and all options
 python3 fix_chat_history.py --help
@@ -286,17 +308,48 @@ To apply these changes, run without --dry-run:
 
 ---
 
+## Machine Migration
+
+When transferring VS Code workspace storage from one machine to another (e.g., copying `%APPDATA%\Code\User\` to a new laptop), VS Code may create **new** workspace storage folders with different hashes — even for the same workspace URI. This means:
+
+- Your old sessions exist on disk in the **old** folder
+- VS Code reads from a **new** folder (different hash)
+- Sessions are invisible in the UI
+
+The `--merge` flag detects these duplicate folders and copies the missing sessions into the active one:
+
+```bash
+# Preview what would be merged
+python3 fix_chat_history.py --merge --dry-run
+
+# Apply the merge (close VS Code first!)
+python3 fix_chat_history.py --merge --yes
+
+# For VS Code Insiders
+python3 fix_chat_history.py --merge --insiders --yes
+```
+
+This will:
+1. Find workspace URIs that have multiple storage folders
+2. Identify the active (newest) folder for each
+3. Copy missing session files from old folders into the active one
+4. Update `chat.ChatSessionStore.index`, `agentSessions.model.cache`, and `agentSessions.state.cache`
+
+---
+
 ## Troubleshooting
 
 **No workspaces found**
 - Verify VS Code Chat has been used previously
 - Confirm workspace storage directory exists: `~/.config/Code/User/workspaceStorage/` (Linux/macOS) or `%APPDATA%\Code\User\workspaceStorage\` (Windows)
+- For VS Code Insiders, use `--insiders` flag or check `Code - Insiders` directory
 
 **Sessions not restored after repair**
 - Confirm VS Code was completely closed before running the script
-- Reload VS Code window: `Ctrl+Shift+P` → "Reload Window"
+- Reload VS Code window: `Ctrl+Shift+P` -> "Reload Window"
 - Verify backup file creation was successful
 - Check workspace ID matches current project
+- If you migrated from another machine, try `--merge` mode first — VS Code may have created new storage folders
 
 **Rollback procedure**
 - Locate backup: `state.vscdb.backup.<timestamp>`
@@ -323,7 +376,13 @@ This is a VS Code core bug, not a GitHub Copilot extension issue. The Copilot ex
 ## FAQ
 
 **Can sessions be transferred between workspaces?**  
-Yes. Session files are standard JSON. Copy files between workspace `chatSessions/` directories, then run the repair script to update the index.
+Yes. Session files are standard JSON or JSONL. Copy files between workspace `chatSessions/` directories, then run the repair script to update the index.
+
+**How do I fix sessions after migrating to a new machine?**  
+Use `python3 fix_chat_history.py --merge` — this detects duplicate workspace storage folders (old vs new hashes) and merges sessions into the active one.
+
+**Does this work with VS Code Insiders?**  
+Yes. Add the `--insiders` flag to any command, e.g., `python3 fix_chat_history.py --insiders --dry-run`.
 
 **Folder mode vs workspace file (.code-workspace) storage?**  
 Different workspace modes use distinct storage locations. Chat histories exist in both locations but are isolated by workspace context.
