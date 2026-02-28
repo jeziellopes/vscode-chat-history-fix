@@ -1,3 +1,17 @@
+# 1.0.0 (2026-02-28)
+
+
+### Features
+
+* add --insiders flag, --merge mode, JSONL support, and agent cache updates ([04b71f2](https://github.com/jeziellopes/vscode-chat-history-fix/commit/04b71f2d3b3d397ed23013adba9bcca2cf7509ea))
+* add option to recover orphaned sessions from workspaces ([7d8ed2f](https://github.com/jeziellopes/vscode-chat-history-fix/commit/7d8ed2f9f299202ea5519d37ccc615de2bd11157))
+* Add options for dry run and orphan removal in repair tool ([3703efd](https://github.com/jeziellopes/vscode-chat-history-fix/commit/3703efde4239beccbaa7827717dcd7b6a7aecc28))
+* Add project name extraction and matching for workspaces ([63a8c9b](https://github.com/jeziellopes/vscode-chat-history-fix/commit/63a8c9bd40d001bda9fe1d3663e84bdabe95bc7f))
+* add unified VS Code Chat History Repair Tool ([d314774](https://github.com/jeziellopes/vscode-chat-history-fix/commit/d3147746d32e11de0f3b0fcb66242a9ec7aebca0))
+* Add VS Code Chat Session Index Repair Tool v3 for automatic repair of corrupted workspaces ([0b991a7](https://github.com/jeziellopes/vscode-chat-history-fix/commit/0b991a74dba0256d15f2a686cbb6cfccf3c2ba1d))
+* **docs:** Add cross-workspace orphan detection details ([32f6754](https://github.com/jeziellopes/vscode-chat-history-fix/commit/32f67544b06fcc64e94a42e88aa968f4b73644d9))
+* Enhance repair_workspace to track restored sessions ([6c7f56d](https://github.com/jeziellopes/vscode-chat-history-fix/commit/6c7f56de45ab9cd0dbcdfd526273750e2eec9808))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
