@@ -70,10 +70,29 @@ import sys
 import platform
 import io
 
+def _ensure_utf8_stream(stream):
+    """Return a UTF-8-capable text stream, avoiding AttributeError on .buffer."""
+    encoding = getattr(stream, "encoding", None)
+    if not encoding or not encoding.lower().startswith("cp"):
+        return stream
+    # Prefer reconfigure when available (Python 3.7+)
+    if hasattr(stream, "reconfigure"):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+            return stream
+        except (TypeError, ValueError):
+            pass
+    # Fall back to wrapping the underlying buffer if present
+    if hasattr(stream, "buffer"):
+        return io.TextIOWrapper(stream.buffer, encoding="utf-8", errors="replace")
+    # As a last resort, leave the stream unchanged
+    return stream
+
+
 # Ensure emoji/unicode output works on Windows (cp1252 terminals)
-if sys.stdout.encoding and sys.stdout.encoding.lower().startswith('cp'):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+sys.stdout = _ensure_utf8_stream(sys.stdout)
+sys.stderr = _ensure_utf8_stream(sys.stderr)
+
 import base64
 from pathlib import Path
 from datetime import datetime
@@ -321,15 +340,18 @@ class WorkspaceInfo:
                 ).fetchone()
                 if row2:
                     agent_cache = json.loads(row2[0])
-                    for item in agent_cache:
-                        resource = item.get("resource", "")
-                        if "vscode-chat-session://local/" in resource:
-                            b64 = resource.split("/")[-1]
-                            try:
-                                session_id = base64.b64decode(b64).decode()
-                                self.sessions_in_agent_cache.add(session_id)
-                            except:
-                                pass
+                    if isinstance(agent_cache, list):
+                        for item in agent_cache:
+                            if not isinstance(item, dict):
+                                continue
+                            resource = item.get("resource", "")
+                            if "vscode-chat-session://local/" in resource:
+                                b64 = resource.split("/")[-1]
+                                try:
+                                    session_id = base64.b64decode(b64).decode()
+                                    self.sessions_in_agent_cache.add(session_id)
+                                except:
+                                    pass
 
                 conn.close()
             except:
@@ -418,7 +440,8 @@ def find_orphan_in_other_workspaces(session_id: str, current_workspace: Workspac
 
 def _session_id_to_resource(session_id: str) -> str:
     """Convert a session ID to a vscode-chat-session URI with base64-encoded ID."""
-    b64 = base64.b64encode(session_id.encode()).decode()
+    # Use URL-safe base64 and strip padding so the ID is safe in a URI path segment
+    b64 = base64.urlsafe_b64encode(session_id.encode()).decode().rstrip("=")
     return f"vscode-chat-session://local/{b64}"
 
 
