@@ -1,9 +1,11 @@
-# VS Code Chat History Fix
 
-A utility to repair corrupted chat session indices in VS Code's workspace storage.
+# vscdb-fix
 
-> **Problem:** VS Code chat sessions become invisible due to index corruption in `state.vscdb`, despite session data files remaining intact on disk.  
-> **Solution:** This tool scans session files and rebuilds the database index to restore visibility of all chat sessions.
+A utility to repair corrupted chat session indices in VS Code workspace storage databases (`state.vscdb`).
+
+
+> **Problem:** VS Code chat sessions become invisible due to index corruption in `state.vscdb`, even though session data files remain intact on disk.
+> **Solution:** vscdb-fix scans session files and rebuilds the database index to restore visibility of all chat sessions.
 
 ## Quick Start
 
