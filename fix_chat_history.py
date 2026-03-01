@@ -790,6 +790,8 @@ def list_workspaces_mode(show_all: bool = False):
         
         print(f"   Sessions on disk: {len(ws.sessions_on_disk)}")
         print(f"   Sessions in index: {len(ws.sessions_in_index)}")
+        if ws.empty_sessions_in_index:
+            print(f"   Sessions empty: {len(ws.empty_sessions_in_index)}")
         print(f"   Sessions in agent cache: {len(ws.sessions_in_agent_cache)}")
         
         if ws.missing_from_index:
@@ -853,6 +855,8 @@ def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bo
     
     print(f"   Sessions on disk: {len(workspace.sessions_on_disk)}")
     print(f"   Sessions in index: {len(workspace.sessions_in_index)}")
+    if workspace.empty_sessions_in_index:
+        print(f"   Sessions empty: {len(workspace.empty_sessions_in_index)}")
     print()
 
     if not workspace.needs_repair:
@@ -1034,6 +1038,8 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
             print(f"   Workspace file: {ws.workspace_file}")
         print(f"   Sessions on disk: {len(ws.sessions_on_disk)}")
         print(f"   Sessions in index: {len(ws.sessions_in_index)}")
+        if ws.empty_sessions_in_index:
+            print(f"   Sessions empty: {len(ws.empty_sessions_in_index)}")
         print(f"   Sessions in agent cache: {len(ws.sessions_in_agent_cache)}")
 
         if ws.missing_from_index:
