@@ -586,6 +586,7 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_detai
         'success': False,
         'sessions_restored': 0,
         'sessions_removed': 0,
+        'agent_cache_added': 0,
         'error': None,
         'restored_sessions': []
     }
@@ -624,8 +625,20 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_detai
                 is_empty = True
                 initial_location = "panel"
 
-                if json_file.exists():
-                    # Parse legacy .json format
+                if jsonl_file.exists():
+                    # Parse newer .jsonl format (preferred; may coexist with legacy .json)
+                    parsed = parse_jsonl_session(jsonl_file)
+                    if parsed:
+                        title = parsed["title"]
+                        last_message_date = parsed["lastMessageDate"]
+                        is_empty = parsed["isEmpty"]
+                        initial_location = parsed["initialLocation"]
+                    else:
+                        print(f"      ⚠️  Failed to parse JSONL {session_id}")
+                        continue
+
+                elif json_file.exists():
+                    # Parse legacy .json format (fallback when no .jsonl exists)
                     with open(json_file, 'r', encoding='utf-8') as f:
                         session_data = json.load(f)
 
@@ -652,18 +665,6 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_detai
                         last_message_date = last_request.get("timestamp", 0)
 
                     initial_location = session_data.get("initialLocation", "panel")
-
-                elif jsonl_file.exists():
-                    # Parse newer .jsonl format
-                    parsed = parse_jsonl_session(jsonl_file)
-                    if parsed:
-                        title = parsed["title"]
-                        last_message_date = parsed["lastMessageDate"]
-                        is_empty = parsed["isEmpty"]
-                        initial_location = parsed["initialLocation"]
-                    else:
-                        print(f"      ⚠️  Failed to parse JSONL {session_id}")
-                        continue
 
                 else:
                     continue  # No file found
@@ -717,6 +718,7 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_detai
 
         result['success'] = True
         result['sessions_restored'] = len(workspace.missing_from_index)
+        result['agent_cache_added'] = len(workspace.missing_from_agent_cache)
 
         # Only count removed sessions if we're actually removing orphans
         if remove_orphans:
@@ -930,8 +932,13 @@ def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bo
         print(f"📊 Summary:")
         if result['sessions_restored'] > 0:
             print(f"   Sessions restored: {result['sessions_restored']}")
+        if result.get('agent_cache_added', 0) > 0:
+            print(f"   Agent panel cache entries added: {result['agent_cache_added']}")
         if result['sessions_removed'] > 0:
             print(f"   Orphaned entries removed: {result['sessions_removed']}")
+        if (result['sessions_restored'] == 0 and result.get('agent_cache_added', 0) == 0
+                and result['sessions_removed'] == 0):
+            print(f"   (nothing to change)")
         print()
         
         if not dry_run:
@@ -1139,6 +1146,9 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
         if result['success']:
             if result['sessions_restored'] > 0:
                 print(f"      ✅ Will restore {result['sessions_restored']} session(s)" if dry_run else f"      ✅ Restored {result['sessions_restored']} session(s)")
+
+            if result.get('agent_cache_added', 0) > 0:
+                print(f"      ✅ Will add {result['agent_cache_added']} agent panel cache entr(y|ies)" if dry_run else f"      ✅ Added {result['agent_cache_added']} agent panel cache entr(y|ies)")
 
             if result['sessions_removed'] > 0:
                 print(f"      🗑️  Will remove {result['sessions_removed']} orphaned entr(y|ies)" if dry_run else f"      🗑️  Removed {result['sessions_removed']} orphaned entr(y|ies)")
