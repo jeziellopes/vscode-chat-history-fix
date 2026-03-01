@@ -19,7 +19,7 @@ Usage:
     # Auto-repair ALL workspaces
     python3 fix_chat_history.py
     
-    # List all workspaces
+    # List workspaces that need repair
     python3 fix_chat_history.py --list
     
     # Repair specific workspace
@@ -29,7 +29,8 @@ Usage:
     python3 fix_chat_history.py --merge
 
 Options:
-    --list             List all workspaces with chat sessions
+    --list             List workspaces that need repair
+    --show-all         (with --list) Show all workspaces, including healthy ones
     --dry-run          Preview changes without modifying anything
     --yes              Skip confirmation prompts
     --remove-orphans   Remove orphaned index entries (default: keep)
@@ -48,8 +49,11 @@ Examples:
     # Recover sessions from other workspaces
     python3 fix_chat_history.py --recover-orphans
     
-    # List workspaces to find ID
+    # List workspaces that need repair
     python3 fix_chat_history.py --list
+    
+    # List all workspaces (including healthy ones)
+    python3 fix_chat_history.py --list --show-all
     
     # Fix specific workspace
     python3 fix_chat_history.py f4c750964946a489902dcd863d1907de
@@ -725,11 +729,14 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_detai
 
     return result
 
-def list_workspaces_mode():
-    """List all workspaces with chat sessions."""
+def list_workspaces_mode(show_all: bool = False):
+    """List workspaces with chat sessions."""
     print()
     print("=" * 70)
-    print("VS Code Workspaces with Chat Sessions")
+    if show_all:
+        print("VS Code Workspaces with Chat Sessions")
+    else:
+        print("VS Code Workspaces That Need Repair")
     print("=" * 70)
     print()
 
@@ -738,6 +745,12 @@ def list_workspaces_mode():
     if not workspaces:
         print("No workspaces with chat sessions found.")
         return 0
+
+    if not show_all:
+        workspaces = [ws for ws in workspaces if ws.needs_repair]
+        if not workspaces:
+            print("✅ No workspaces need repair.")
+            return 0
 
     print(f"Found {len(workspaces)} workspace(s):")
     print()
@@ -1462,6 +1475,7 @@ def main():
     remove_orphans = '--remove-orphans' in sys.argv
     recover_orphans = '--recover-orphans' in sys.argv
     list_mode = '--list' in sys.argv
+    show_all = '--show-all' in sys.argv
     merge_mode = '--merge' in sys.argv
     show_help = '--help' in sys.argv or '-h' in sys.argv
     _use_insiders = '--insiders' in sys.argv
@@ -1472,7 +1486,7 @@ def main():
 
     # List mode
     if list_mode:
-        return list_workspaces_mode()
+        return list_workspaces_mode(show_all=show_all)
 
     # Merge mode - merge sessions from duplicate workspace storage folders
     if merge_mode:

@@ -111,13 +111,17 @@ python3 fix_chat_history.py --yes
 
 ### List Workspaces
 
-See all VS Code workspaces with chat sessions:
+List workspaces that need repair:
 
 ```bash
 python3 fix_chat_history.py --list
 ```
 
-This shows you which workspaces have sessions and which need repair.
+To include healthy workspaces as well:
+
+```bash
+python3 fix_chat_history.py --list --show-all
+```
 
 ### Repair Specific Workspace
 
@@ -134,6 +138,9 @@ python3 fix_chat_history.py f4c750964946a489902dcd863d1907de
 ### Advanced Options
 
 ```bash
+# Show all workspaces, including healthy ones
+python3 fix_chat_history.py --list --show-all
+
 # Recover orphaned sessions from other workspaces
 python3 fix_chat_history.py --recover-orphans
 
