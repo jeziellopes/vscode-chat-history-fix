@@ -363,7 +363,7 @@ class WorkspaceInfo:
         if self.folder:
             project_name = extract_project_name(self.folder)
             if project_name:
-                return f"{project_name} ({self.id[:8]}...) [Folder]"
+                return f"{project_name} ({self.id}) [Folder]"
         
         # Try to get name from .code-workspace file
         if self.workspace_file:
@@ -372,10 +372,10 @@ class WorkspaceInfo:
                 # Remove .code-workspace extension if present
                 if workspace_name.endswith('.code-workspace'):
                     workspace_name = workspace_name[:-15]
-                return f"{workspace_name} ({self.id[:8]}...) [Workspace File]"
+                return f"{workspace_name} ({self.id}) [Workspace File]"
         
         # Fallback to "Unknown"
-        return f"Unknown ({self.id[:8]}...)"
+        return f"Unknown ({self.id})"
 
     @property
     def missing_from_index(self) -> Set[str]:
