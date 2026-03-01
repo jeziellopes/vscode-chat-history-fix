@@ -34,6 +34,7 @@ Options:
     --dry-run          Preview changes without modifying anything
     --yes              Skip confirmation prompts
     --remove-orphans   Remove orphaned index entries (default: keep)
+    --remove-empty     Remove empty sessions (no requests) from index and caches
     --recover-orphans  Copy orphaned sessions from other workspaces
     --merge            Merge sessions from duplicate workspace folders
     --insiders         Use VS Code Insiders storage instead of regular VS Code
@@ -57,6 +58,9 @@ Examples:
     
     # Fix specific workspace
     python3 fix_chat_history.py f4c750964946a489902dcd863d1907de
+
+    # Remove empty (New Chat) sessions from index and caches
+    python3 fix_chat_history.py --remove-empty
 
     # Use VS Code Insiders instead of regular VS Code
     python3 fix_chat_history.py --insiders
@@ -462,7 +466,7 @@ def _session_id_to_resource(session_id: str) -> str:
     return f"vscode-chat-session://local/{b64}"
 
 
-def _update_agent_sessions_cache(cursor, entries: Dict):
+def _update_agent_sessions_cache(cursor, entries: Dict, remove_empty_resources: set = None):
     """Update agentSessions.model.cache and agentSessions.state.cache.
     
     The Agent panel in VS Code Insiders reads from these keys, not from
@@ -538,14 +542,17 @@ def _update_agent_sessions_cache(cursor, entries: Dict):
         else:
             non_chat_state_entries.append(item)
     
-    # Keep existing chat entries that are already in the cache
+    # Keep existing chat entries that are already in the cache,
+    # optionally purging those belonging to empty sessions.
     kept_model_entries = [
         item for item in existing_model_cache
         if "vscode-chat-session://" in item.get("resource", "")
+        and (not remove_empty_resources or item.get("resource", "") not in remove_empty_resources)
     ]
     kept_state_entries = [
         item for item in existing_state_cache
         if "vscode-chat-session://" in item.get("resource", "")
+        and (not remove_empty_resources or item.get("resource", "") not in remove_empty_resources)
     ]
     
     # Add missing sessions to both caches
@@ -598,12 +605,13 @@ def _update_agent_sessions_cache(cursor, entries: Dict):
     )
 
 
-def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_details: bool = False, remove_orphans: bool = False) -> Dict:
+def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_details: bool = False, remove_orphans: bool = False, remove_empty: bool = False) -> Dict:
     """Repair a workspace's chat session index."""
     result = {
         'success': False,
         'sessions_restored': 0,
         'sessions_removed': 0,
+        'empty_sessions_removed': 0,
         'agent_cache_added': 0,
         'error': None,
         'restored_sessions': []
@@ -707,6 +715,17 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_detai
             except Exception as e:
                 print(f"      ⚠️  Failed to read {session_id}: {e}")
 
+        # Compute empty-session resources before potentially filtering them out
+        empty_resources = set()
+        if remove_empty:
+            empty_resources = {
+                _session_id_to_resource(sid)
+                for sid, data in entries.items()
+                if data.get("isEmpty", False)
+            }
+            result['empty_sessions_removed'] = len(empty_resources)
+            entries = {sid: data for sid, data in entries.items() if not data.get("isEmpty", False)}
+
         if not dry_run:
             # Create backup
             backup_path = str(workspace.db_path) + f".backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -729,7 +748,10 @@ def repair_workspace(workspace: WorkspaceInfo, dry_run: bool = False, show_detai
 
             # Also update agentSessions.model.cache and agentSessions.state.cache
             # These are what the Agent panel (right side) reads from
-            _update_agent_sessions_cache(cursor, entries)
+            _update_agent_sessions_cache(
+                cursor, entries,
+                remove_empty_resources=empty_resources if remove_empty else None
+            )
 
             conn.commit()
             conn.close()
@@ -822,7 +844,7 @@ def list_workspaces_mode(show_all: bool = False):
 
     return 0
 
-def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bool, recover_orphans: bool, auto_yes: bool):
+def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bool, recover_orphans: bool, auto_yes: bool, remove_empty: bool = False):
     """Repair a specific workspace by ID."""
     storage_root = get_vscode_storage_root()
     workspace_path = storage_root / workspace_id
@@ -859,7 +881,7 @@ def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bo
         print(f"   Sessions empty: {len(workspace.empty_sessions_in_index)}")
     print()
 
-    if not workspace.needs_repair:
+    if not workspace.needs_repair and not (remove_empty and workspace.empty_sessions_in_index):
         print("✅ This workspace doesn't need repair!")
         return 0
 
@@ -898,6 +920,14 @@ def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bo
         
         if recoverable_orphans and not recover_orphans:
             print(f"   💡 Use --recover-orphans to copy these {len(recoverable_orphans)} session(s) back")
+
+    if workspace.empty_sessions_in_index:
+        empty_msg = f"🗑️  Empty sessions in index: {len(workspace.empty_sessions_in_index)}"
+        if remove_empty:
+            empty_msg += " (will be removed)"
+        else:
+            empty_msg += " (will be kept - use --remove-empty to remove)"
+        print(empty_msg)
     
     print()
 
@@ -943,7 +973,7 @@ def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bo
 
     # Repair
     print("🔧 Repairing workspace...")
-    result = repair_workspace(workspace, dry_run=dry_run, remove_orphans=remove_orphans)
+    result = repair_workspace(workspace, dry_run=dry_run, remove_orphans=remove_orphans, remove_empty=remove_empty)
 
     if result['success']:
         print()
@@ -958,8 +988,10 @@ def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bo
             print(f"   Agent panel cache entries added: {result['agent_cache_added']}")
         if result['sessions_removed'] > 0:
             print(f"   Orphaned entries removed: {result['sessions_removed']}")
+        if result.get('empty_sessions_removed', 0) > 0:
+            print(f"   Empty sessions removed: {result['empty_sessions_removed']}")
         if (result['sessions_restored'] == 0 and result.get('agent_cache_added', 0) == 0
-                and result['sessions_removed'] == 0):
+                and result['sessions_removed'] == 0 and result.get('empty_sessions_removed', 0) == 0):
             print(f"   (nothing to change)")
         print()
         
@@ -981,7 +1013,7 @@ def repair_single_workspace(workspace_id: str, dry_run: bool, remove_orphans: bo
         print(f"❌ Repair failed: {result['error']}")
         return 1
 
-def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, recover_orphans: bool):
+def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, recover_orphans: bool, remove_empty: bool = False):
     """Auto-repair all workspaces that need it."""
     print()
     print("=" * 70)
@@ -997,6 +1029,10 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
         print("🗑️  REMOVE ORPHANS MODE - Orphaned index entries will be removed")
         print()
     
+    if remove_empty:
+        print("🗑️  REMOVE EMPTY MODE - Empty (no-request) sessions will be removed from index and caches")
+        print()
+
     if recover_orphans:
         print("📥 RECOVER ORPHANS MODE - Orphaned sessions will be copied from other workspaces")
         print()
@@ -1012,8 +1048,11 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
     print(f"   Found {len(workspaces)} workspace(s) with chat sessions")
     print()
 
-    # Find workspaces that need repair
-    needs_repair = [ws for ws in workspaces if ws.needs_repair]
+    # Find workspaces that need repair (or have empty sessions to remove)
+    needs_repair = [
+        ws for ws in workspaces
+        if ws.needs_repair or (remove_empty and ws.empty_sessions_in_index)
+    ]
 
     if not needs_repair:
         print("✅ All workspaces are healthy! No repairs needed.")
@@ -1057,7 +1096,7 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
                 orphan_msg += " (will be kept - use --remove-orphans to remove)"
             print(orphan_msg)
             total_orphaned += len(ws.orphaned_in_index)
-            
+
             # Check if orphans exist in other workspaces
             for session_id in ws.orphaned_in_index:
                 found_info = find_orphan_in_other_workspaces(session_id, ws, workspaces)
@@ -1074,11 +1113,23 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
                     else:
                         print(f"      💡 Session {session_id[:8]}... found in workspace: {found_ws.get_display_name()}")
 
+        if ws.empty_sessions_in_index:
+            empty_msg = f"   🗑️  Empty sessions in index: {len(ws.empty_sessions_in_index)}"
+            if remove_empty:
+                empty_msg += " (will be removed)"
+            else:
+                empty_msg += " (will be kept - use --remove-empty to remove)"
+            print(empty_msg)
+
         print()
+
+    total_empty = sum(len(ws.empty_sessions_in_index) for ws in needs_repair) if remove_empty else 0
 
     print(f"📊 Total issues:")
     print(f"   Sessions to restore: {total_missing}")
     print(f"   Orphaned entries: {total_orphaned}")
+    if remove_empty and total_empty > 0:
+        print(f"   Empty sessions to remove: {total_empty}")
     if recoverable_orphans:
         print(f"   🔍 Orphans found in other workspaces: {len(recoverable_orphans)}")
         if recover_orphans:
@@ -1165,7 +1216,7 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
         if ws.folder:
             print(f"      Path: {ws.folder}")
 
-        result = repair_workspace(ws, dry_run=dry_run, show_details=dry_run, remove_orphans=remove_orphans)
+        result = repair_workspace(ws, dry_run=dry_run, show_details=dry_run, remove_orphans=remove_orphans, remove_empty=remove_empty)
 
         if result['success']:
             if result['sessions_restored'] > 0:
@@ -1176,6 +1227,9 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
 
             if result['sessions_removed'] > 0:
                 print(f"      🗑️  Will remove {result['sessions_removed']} orphaned entr(y|ies)" if dry_run else f"      🗑️  Removed {result['sessions_removed']} orphaned entr(y|ies)")
+
+            if result.get('empty_sessions_removed', 0) > 0:
+                print(f"      🗑️  Will remove {result['empty_sessions_removed']} empty session(s)" if dry_run else f"      🗑️  Removed {result['empty_sessions_removed']} empty session(s)")
             success_count += 1
         else:
             print(f"      ❌ Failed: {result['error']}")
@@ -1198,6 +1252,8 @@ def repair_all_workspaces(dry_run: bool, auto_yes: bool, remove_orphans: bool, r
     print(f"   Total sessions restored: {total_missing}")
     if total_orphaned > 0 and remove_orphans:
         print(f"   Total orphaned entries removed: {total_orphaned}")
+    if remove_empty and total_empty > 0:
+        print(f"   Total empty sessions removed: {total_empty}")
     print()
 
     if not dry_run:
@@ -1507,6 +1563,7 @@ def main():
     dry_run = '--dry-run' in sys.argv
     auto_yes = '--yes' in sys.argv
     remove_orphans = '--remove-orphans' in sys.argv
+    remove_empty = '--remove-empty' in sys.argv
     recover_orphans = '--recover-orphans' in sys.argv
     list_mode = '--list' in sys.argv
     show_all = '--show-all' in sys.argv
@@ -1545,7 +1602,7 @@ def main():
                 return 1
             print()
 
-        return repair_single_workspace(workspace_id, dry_run, remove_orphans, recover_orphans, auto_yes)
+        return repair_single_workspace(workspace_id, dry_run, remove_orphans, recover_orphans, auto_yes, remove_empty)
 
     # Auto-repair all workspaces mode (default)
     if not dry_run and not auto_yes:
@@ -1558,7 +1615,7 @@ def main():
             print("❌ Aborted. Please close VS Code and run this script again.")
             return 1
 
-    return repair_all_workspaces(dry_run, auto_yes, remove_orphans, recover_orphans)
+    return repair_all_workspaces(dry_run, auto_yes, remove_orphans, recover_orphans, remove_empty)
 
 if __name__ == "__main__":
     exit_code = main()
