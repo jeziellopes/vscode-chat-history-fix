@@ -324,6 +324,8 @@ class WorkspaceInfo:
 
         # Get session IDs from index
         self.sessions_in_index: Set[str] = set()
+        # Session IDs that are empty (no requests) according to the index
+        self.empty_sessions_in_index: Set[str] = set()
         # Get session IDs from agentSessions.model.cache (used by Agent panel)
         self.sessions_in_agent_cache: Set[str] = set()
         if self.db_path.exists():
@@ -336,7 +338,12 @@ class WorkspaceInfo:
 
                 if row:
                     index = json.loads(row[0])
-                    self.sessions_in_index = set(index.get("entries", {}).keys())
+                    entries_map = index.get("entries", {})
+                    self.sessions_in_index = set(entries_map.keys())
+                    self.empty_sessions_in_index = {
+                        sid for sid, meta in entries_map.items()
+                        if meta.get("isEmpty", False)
+                    }
 
                 # Parse agentSessions.model.cache
                 row2 = cursor.execute(
@@ -388,8 +395,14 @@ class WorkspaceInfo:
 
     @property
     def missing_from_agent_cache(self) -> Set[str]:
-        """Session files that exist on disk but aren't in the agent sessions cache."""
-        return self.sessions_on_disk - self.sessions_in_agent_cache
+        """Non-empty session files that exist on disk but aren't in the agent sessions cache.
+        
+        Empty sessions (isEmpty=True) are intentionally excluded from the agent panel
+        cache because VS Code would discard them on load anyway, causing a visible
+        count drop ("20+ chats suddenly showing 10+").
+        """
+        non_empty_on_disk = self.sessions_on_disk - self.empty_sessions_in_index
+        return non_empty_on_disk - self.sessions_in_agent_cache
 
     @property
     def orphaned_in_index(self) -> Set[str]:
@@ -537,6 +550,11 @@ def _update_agent_sessions_cache(cursor, entries: Dict):
     
     # Add missing sessions to both caches
     for session_id, entry_data in entries.items():
+        # Never add empty sessions to the agent panel cache — VS Code would
+        # show them momentarily then discard them (causing the count-drop symptom).
+        if entry_data.get("isEmpty", False):
+            continue
+
         resource = _session_id_to_resource(session_id)
         
         if resource not in existing_model_resources:
