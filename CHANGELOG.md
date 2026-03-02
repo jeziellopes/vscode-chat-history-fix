@@ -1,3 +1,11 @@
+# [1.1.0](https://github.com/jeziellopes/vscdb-fix/compare/v1.0.0...v1.1.0) (2026-03-02)
+
+
+### Features
+
+* **command:** list only workspaces needing repair as default, add --show-all option ([3f26dd7](https://github.com/jeziellopes/vscdb-fix/commit/3f26dd7b4986cd0bd2d4825a209fb752fd080649))
+* **workspace:** add option to remove empty sessions from index ([f73140c](https://github.com/jeziellopes/vscdb-fix/commit/f73140c8ca021a976f0b8525a896c1b3882241f7))
+
 # 1.0.0 (2026-02-28)
 
 
